@@ -12,6 +12,7 @@ PUBLIC_PATH="/"
 ENV="dev"
 GATEWAY_NAME="default-gateway"
 VIRTUAL_SERVICE_NAME=""
+SECRET=""
 
 # Parse flags
 while [[ "$#" -gt 0 ]]; do
@@ -21,6 +22,7 @@ while [[ "$#" -gt 0 ]]; do
         -p|--port) SERVICE_PORT="$2"; shift ;;
         --path) PUBLIC_PATH="$2"; shift ;;
         --env) ENV="$2"; shift ;;
+        --secret) SECRET="$2"; shift ;;
         -h|--help)
             echo "🧩 istio-exposer.sh - Istio Service Exposer"
             echo "Author: Emad Malekpour — https://malekpour-dev.ir"
@@ -71,9 +73,30 @@ spec:
     hosts:
     - "*"
 EOF
+
+if [[ -n "$SECRET" ]]; then
+  # Patch the gateway to add 443 server
+  kubectl patch gateway $GATEWAY_NAME -n $NAMESPACE --type='json' -p='[{
+    "op": "add",
+    "path": "/spec/servers/-",
+    "value": {
+      "port": {
+        "number": 443,
+        "name": "https",
+        "protocol": "HTTPS"
+      },
+      "tls": {
+        "mode": "SIMPLE",
+        "credentialName": "'"$SECRET"'"
+      },
+      "hosts": ["*"]
+    }
+  }]'
+fi
+
 else
     echo "✅ [prod] Using default istio-ingressgateway (no need to create gateway)"
-    GATEWAY_NAME="istio-system/ingressgateway"
+    GATEWAY_NAME="istio-ingress/ingressgateway"
 fi
 
 echo "✅ Creating VirtualService $VIRTUAL_SERVICE_NAME ..."
@@ -104,16 +127,18 @@ EOF
 
 if [[ "$ENV" == "dev" ]]; then
   echo "🔧 Patching istio-ingressgateway to NodePort..."
-  kubectl patch svc istio-ingressgateway -n istio-system -p '{"spec": {"type": "NodePort"}}'
+  kubectl patch svc istio-ingressgateway -n istio-ingress -p '{"spec": {"type": "NodePort"}}'
 else
   echo "🔧 Ensuring istio-ingressgateway is LoadBalancer..."
-  kubectl patch svc istio-ingressgateway -n istio-system -p '{"spec": {"type": "LoadBalancer"}}'
+  kubectl patch svc istio-ingressgateway -n istio-ingress -p '{"spec": {"type": "LoadBalancer"}}'
 fi
 
 # Print output address
-NODE_PORT=$(kubectl get svc istio-ingressgateway -n istio-system -o=jsonpath='{.spec.ports[?(@.port==80)].nodePort}')
+HTTP_NODE_PORT=$(kubectl get svc istio-ingressgateway -n istio-ingress -o=jsonpath='{.spec.ports[?(@.port==80)].nodePort}')
+HTTPS_NODE_PORT=$(kubectl get svc istio-ingressgateway -n istio-ingress -o=jsonpath='{.spec.ports[?(@.port==443)].nodePort}')
 NODE_IP=$(kubectl get nodes -o=jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 
 echo ""
 echo "🌐 Your service is now available at:"
-echo "👉 http://${NODE_IP}:${NODE_PORT}${PUBLIC_PATH}"
+echo "👉 http://${NODE_IP}:${HTTP_NODE_PORT}${PUBLIC_PATH}"
+echo "👉 https://${NODE_IP}:${HTTPS_NODE_PORT}${PUBLIC_PATH}"
