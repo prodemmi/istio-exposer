@@ -33,7 +33,7 @@ cd istio-exposer && chmod +x istio-exposer.sh
 ## Example
 ```bash
 ./istio-exposer.sh \
-  --name version-viewer \
+  --name myapp-service \
   --namespace default \
   --port 3000 \
   --path / \
